@@ -102,18 +102,4 @@ Xem file `1.Documents/HUONG_DAN_SU_DUNG.md` để biết chi tiết.
 - ✅ Hỗ trợ nhiều database
 - ✅ Docker support
 
-## Tài liệu
 
-- [Hướng dẫn cài đặt](1.Documents/HUONG_DAN_CAI_DAT.md)
-- [Hướng dẫn Docker](1.Documents/HUONG_DAN_DOCKER.md)
-- [Hướng dẫn IntelliJ IDEA](1.Documents/HUONG_DAN_INTELLIJ.md) ⭐
-- [Hướng dẫn sử dụng](1.Documents/HUONG_DAN_SU_DUNG.md)
-- [Design Patterns](1.Documents/DESIGN_PATTERNS.md)
-- [Sơ đồ lớp](1.Documents/SO_DO_LOP.md)
-- [Danh sách tính năng](3.Functions%20List/DANH_SACH_TINH_NANG.md)
-- [Quick Start](QUICK_START.md)
-- [IntelliJ Quick Start](INTELLIJ_QUICK_START.md)
-
-## Tác giả
-
-Nhóm sinh viên - Đồ án OOP Advanced
