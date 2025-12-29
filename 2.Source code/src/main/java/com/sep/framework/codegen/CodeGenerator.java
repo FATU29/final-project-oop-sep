@@ -1,0 +1,890 @@
+package com.sep.framework.codegen;
+
+import com.sep.framework.database.ColumnInfo;
+import com.sep.framework.database.DatabaseContext;
+import org.apache.velocity.Template;
+import org.apache.velocity.VelocityContext;
+import org.apache.velocity.app.VelocityEngine;
+
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Properties;
+
+/**
+ * Builder Pattern: Code Generator
+ * Phát sinh mã nguồn từ database schema
+ * Hỗ trợ Windows, Linux, macOS paths
+ */
+public class CodeGenerator {
+    
+    private DatabaseContext dbContext;
+    private String outputPath;
+    private String packageName;
+    private boolean usePackage = true; // Default: use package
+    private VelocityEngine velocityEngine;
+    
+    public CodeGenerator(DatabaseContext dbContext) {
+        this.dbContext = dbContext;
+        initializeVelocity();
+    }
+    
+    /**
+     * Khởi tạo Velocity template engine
+     */
+    private void initializeVelocity() {
+        Properties props = new Properties();
+        props.put("resource.loader", "class");
+        props.put("class.resource.loader.class", 
+            "org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader");
+        
+        velocityEngine = new VelocityEngine(props);
+        try {
+            velocityEngine.init();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize Velocity engine", e);
+        }
+    }
+    
+    /**
+     * Builder Pattern: Set output path
+     */
+    public CodeGenerator setOutputPath(String outputPath) {
+        this.outputPath = normalizePath(outputPath);
+        return this;
+    }
+    
+    /**
+     * Builder Pattern: Set package name
+     */
+    public CodeGenerator setPackageName(String packageName) {
+        this.packageName = packageName;
+        return this;
+    }
+    
+    /**
+     * Builder Pattern: Set whether to use package structure
+     */
+    public CodeGenerator setUsePackage(boolean usePackage) {
+        this.usePackage = usePackage;
+        return this;
+    }
+    
+    /**
+     * Normalize path để hỗ trợ Windows, Linux, macOS
+     */
+    private String normalizePath(String path) {
+        if (path == null || path.isEmpty()) {
+            return System.getProperty("user.dir");
+        }
+        
+        // Chuyển đổi path separator theo OS
+        String normalized = path.replace("\\", File.separator)
+                               .replace("/", File.separator);
+        
+        // Tạo thư mục nếu chưa tồn tại
+        Path dirPath = Paths.get(normalized);
+        try {
+            Files.createDirectories(dirPath);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create output directory: " + normalized, e);
+        }
+        
+        return normalized;
+    }
+    
+    /**
+     * Generate code cho một bảng
+     */
+    public void generateForTable(String tableName) throws Exception {
+        List<ColumnInfo> columns = dbContext.getColumns(tableName);
+        String primaryKey = dbContext.getPrimaryKey(tableName);
+        
+        // Copy framework source code (chỉ copy 1 lần)
+        if (!new File(outputPath, "src" + File.separator + "main" + File.separator + "java" + File.separator + "com" + File.separator + "sep" + File.separator + "framework").exists()) {
+            copyFrameworkSource();
+        }
+        
+        // Generate pom.xml (chỉ generate 1 lần)
+        if (!new File(outputPath, "pom.xml").exists()) {
+            generatePomXml();
+        }
+        
+        // Generate Entity class
+        generateEntity(tableName, columns, primaryKey);
+        
+        // Generate CRUD Form
+        generateCrudForm(tableName, columns, primaryKey);
+        
+        // Generate Service class
+        generateService(tableName, columns, primaryKey);
+        
+        // Generate Main class để chạy
+        generateMain(tableName, columns, primaryKey);
+        
+        // Generate README cho bảng này
+        java.util.ArrayList<String> singleTable = new java.util.ArrayList<>();
+        singleTable.add(tableName);
+        generateReadme(singleTable);
+    }
+    
+    /**
+     * Generate Entity class
+     */
+    private void generateEntity(String tableName, List<ColumnInfo> columns, String primaryKey) throws Exception {
+        String className = toPascalCase(tableName);
+        StringBuilder code = new StringBuilder();
+        
+        // Package declaration (only if usePackage is true)
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            code.append("package ").append(packageName).append(";\n\n");
+        }
+        
+        // Imports
+        code.append("import java.util.Date;\n\n");
+        
+        // Class declaration with JavaDoc
+        code.append("/**\n");
+        code.append(" * Entity class for table: ").append(tableName).append("\n");
+        code.append(" * Auto-generated by SEP Framework Code Generator\n");
+        code.append(" */\n");
+        code.append("public class ").append(className).append(" {\n\n");
+        
+        // Fields
+        code.append("    // Fields\n");
+        for (ColumnInfo column : columns) {
+            String javaType = getJavaTypeName(column.getJavaType());
+            String fieldName = toCamelCase(column.getName());
+            code.append("    /**\n");
+            code.append("     * ").append(column.getName());
+            if (column.isPrimaryKey()) {
+                code.append(" (Primary Key)");
+            }
+            code.append("\n");
+            code.append("     */\n");
+            code.append("    private ").append(javaType).append(" ").append(fieldName).append(";\n\n");
+        }
+        
+        // Default constructor
+        code.append("    /**\n");
+        code.append("     * Default constructor\n");
+        code.append("     */\n");
+        code.append("    public ").append(className).append("() {\n");
+        code.append("    }\n\n");
+        
+        // Getters and Setters
+        code.append("    // Getters and Setters\n");
+        for (ColumnInfo column : columns) {
+            String javaType = getJavaTypeName(column.getJavaType());
+            String fieldName = toCamelCase(column.getName());
+            String capitalizedName = Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
+            
+            // Getter
+            code.append("    /**\n");
+            code.append("     * Get ").append(fieldName).append("\n");
+            code.append("     * @return ").append(fieldName).append("\n");
+            code.append("     */\n");
+            code.append("    public ").append(javaType).append(" get").append(capitalizedName).append("() {\n");
+            code.append("        return ").append(fieldName).append(";\n");
+            code.append("    }\n\n");
+            
+            // Setter
+            code.append("    /**\n");
+            code.append("     * Set ").append(fieldName).append("\n");
+            code.append("     * @param ").append(fieldName).append(" ").append(fieldName).append("\n");
+            code.append("     */\n");
+            code.append("    public void set").append(capitalizedName).append("(").append(javaType).append(" ").append(fieldName).append(") {\n");
+            code.append("        this.").append(fieldName).append(" = ").append(fieldName).append(";\n");
+            code.append("    }\n\n");
+        }
+        
+        // toString method
+        code.append("    /**\n");
+        code.append("     * String representation\n");
+        code.append("     * @return String representation of the entity\n");
+        code.append("     */\n");
+        code.append("    @Override\n");
+        code.append("    public String toString() {\n");
+        code.append("        StringBuilder sb = new StringBuilder(\"").append(className).append("{\");\n");
+        boolean first = true;
+        for (ColumnInfo column : columns) {
+            String fieldName = toCamelCase(column.getName());
+            if (!first) {
+                code.append("        sb.append(\", ");
+            } else {
+                code.append("        sb.append(\"");
+                first = false;
+            }
+            code.append(fieldName).append("=\").append(").append(fieldName).append(");\n");
+        }
+        code.append("        sb.append('}');\n");
+        code.append("        return sb.toString();\n");
+        code.append("    }\n");
+        
+        code.append("}\n");
+        
+        String fileName = className + ".java";
+        writeFile(fileName, code.toString());
+    }
+    
+    /**
+     * Generate CRUD Form
+     */
+    private void generateCrudForm(String tableName, List<ColumnInfo> columns, String primaryKey) throws Exception {
+        VelocityContext context = new VelocityContext();
+        context.put("packageName", packageName);
+        context.put("className", toPascalCase(tableName) + "Form");
+        context.put("tableName", tableName);
+        context.put("entityName", toPascalCase(tableName));
+        context.put("columns", columns);
+        context.put("primaryKey", primaryKey);
+        
+        String templateContent = loadFormTemplate();
+        String code = processTemplate(templateContent, context);
+        
+        String fileName = toPascalCase(tableName) + "Form.java";
+        writeFile(fileName, code);
+    }
+    
+    /**
+     * Generate Service class
+     */
+    private void generateService(String tableName, List<ColumnInfo> columns, String primaryKey) throws Exception {
+        VelocityContext context = new VelocityContext();
+        context.put("packageName", packageName);
+        context.put("className", toPascalCase(tableName) + "Service");
+        context.put("tableName", tableName);
+        context.put("entityName", toPascalCase(tableName));
+        context.put("columns", columns);
+        context.put("primaryKey", primaryKey);
+        
+        String templateContent = loadServiceTemplate();
+        String code = processTemplate(templateContent, context);
+        
+        String fileName = toPascalCase(tableName) + "Service.java";
+        writeFile(fileName, code);
+    }
+    
+    /**
+     * Process template với Velocity hoặc simple replacement
+     */
+    private String processTemplate(String templateContent, VelocityContext context) {
+        // Use simple string replacement for now (more reliable)
+        return simpleTemplateProcess(templateContent, context);
+    }
+    
+    /**
+     * Simple template processing với string replacement
+     */
+    private String simpleTemplateProcess(String template, VelocityContext context) {
+        String result = template;
+        
+        // Replace all variables from context
+        result = result.replace("${packageName}", safeString(context.get("packageName")));
+        result = result.replace("${className}", safeString(context.get("className")));
+        result = result.replace("${tableName}", safeString(context.get("tableName")));
+        result = result.replace("${entityName}", safeString(context.get("entityName")));
+        result = result.replace("${primaryKey}", safeString(context.get("primaryKey")));
+        
+        return result;
+    }
+    
+    private String safeString(Object obj) {
+        return obj != null ? obj.toString() : "";
+    }
+    
+    /**
+     * Load Entity template
+     */
+    private String loadEntityTemplate() {
+        // Template sẽ được fill với actual data trong generateEntity
+        return "package ${packageName};\n\n" +
+               "import java.util.Date;\n\n" +
+               "public class ${className} {\n" +
+               "    // Fields and getters/setters will be generated\n" +
+               "}\n";
+    }
+    
+    /**
+     * Load Form template
+     */
+    private String loadFormTemplate() {
+        String packageDecl = usePackage && packageName != null && !packageName.trim().isEmpty() 
+            ? "package ${packageName};\n\n" 
+            : "";
+        return packageDecl +
+               "import com.sep.framework.crud.BaseCrudForm;\n" +
+               "import com.sep.framework.database.DatabaseContext;\n\n" +
+               "/**\n" +
+               " * Generated CRUD Form for table: ${tableName}\n" +
+               " * Auto-generated by SEP Framework Code Generator\n" +
+               " */\n" +
+               "public class ${className} extends BaseCrudForm {\n\n" +
+               "    /**\n" +
+               "     * Constructor\n" +
+               "     * @param dbContext Database context\n" +
+               "     */\n" +
+               "    public ${className}(DatabaseContext dbContext) {\n" +
+               "        super(dbContext, \"${tableName}\");\n" +
+               "    }\n" +
+               "}\n";
+    }
+    
+    /**
+     * Load Service template
+     */
+    private String loadServiceTemplate() {
+        String packageDecl = usePackage && packageName != null && !packageName.trim().isEmpty() 
+            ? "package ${packageName};\n\n" 
+            : "";
+        return packageDecl +
+               "import com.sep.framework.database.DatabaseContext;\n" +
+               "import java.util.List;\n" +
+               "import java.util.Map;\n\n" +
+               "/**\n" +
+               " * Generated Service for table: ${tableName}\n" +
+               " * Auto-generated by SEP Framework Code Generator\n" +
+               " */\n" +
+               "public class ${className} {\n\n" +
+               "    private DatabaseContext dbContext;\n\n" +
+               "    /**\n" +
+               "     * Constructor\n" +
+               "     * @param dbContext Database context\n" +
+               "     */\n" +
+               "    public ${className}(DatabaseContext dbContext) {\n" +
+               "        this.dbContext = dbContext;\n" +
+               "    }\n\n" +
+               "    /**\n" +
+               "     * Get all records from ${tableName}\n" +
+               "     * @return List of records\n" +
+               "     */\n" +
+               "    public List<Map<String, Object>> getAll() throws Exception {\n" +
+               "        return dbContext.getAll(\"${tableName}\");\n" +
+               "    }\n\n" +
+               "    /**\n" +
+               "     * Get record by primary key\n" +
+               "     * @param id Primary key value\n" +
+               "     * @return Record data\n" +
+               "     */\n" +
+               "    public Map<String, Object> getById(Object id) throws Exception {\n" +
+               "        List<Map<String, Object>> records = dbContext.getAll(\"${tableName}\");\n" +
+               "        for (Map<String, Object> record : records) {\n" +
+               "            if (record.get(\"${primaryKey}\").equals(id)) {\n" +
+               "                return record;\n" +
+               "            }\n" +
+               "        }\n" +
+               "        return null;\n" +
+               "    }\n\n" +
+               "    /**\n" +
+               "     * Insert new record\n" +
+               "     * @param data Record data\n" +
+               "     * @return Number of affected rows\n" +
+               "     */\n" +
+               "    public int insert(Map<String, Object> data) throws Exception {\n" +
+               "        return dbContext.insert(\"${tableName}\", data);\n" +
+               "    }\n\n" +
+               "    /**\n" +
+               "     * Update record\n" +
+               "     * @param data Record data\n" +
+               "     * @param whereClause WHERE clause\n" +
+               "     * @return Number of affected rows\n" +
+               "     */\n" +
+               "    public int update(Map<String, Object> data, String whereClause) throws Exception {\n" +
+               "        return dbContext.update(\"${tableName}\", data, whereClause);\n" +
+               "    }\n\n" +
+               "    /**\n" +
+               "     * Delete record\n" +
+               "     * @param whereClause WHERE clause\n" +
+               "     * @return Number of affected rows\n" +
+               "     */\n" +
+               "    public int delete(String whereClause) throws Exception {\n" +
+               "        return dbContext.delete(\"${tableName}\", whereClause);\n" +
+               "    }\n" +
+               "}\n";
+    }
+    
+    /**
+     * Generate entity fields từ columns
+     */
+    private String generateEntityFields(List<ColumnInfo> columns) {
+        StringBuilder sb = new StringBuilder();
+        for (ColumnInfo column : columns) {
+            String javaType = getJavaTypeName(column.getJavaType());
+            sb.append("    private ").append(javaType).append(" ").append(toCamelCase(column.getName())).append(";\n");
+        }
+        return sb.toString();
+    }
+    
+    /**
+     * Generate getters/setters
+     */
+    private String generateEntityGettersSetters(List<ColumnInfo> columns) {
+        StringBuilder sb = new StringBuilder();
+        for (ColumnInfo column : columns) {
+            String javaType = getJavaTypeName(column.getJavaType());
+            String fieldName = toCamelCase(column.getName());
+            String capitalizedName = Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
+            
+            // Getter
+            sb.append("    public ").append(javaType).append(" get").append(capitalizedName).append("() {\n");
+            sb.append("        return ").append(fieldName).append(";\n");
+            sb.append("    }\n\n");
+            
+            // Setter
+            sb.append("    public void set").append(capitalizedName).append("(").append(javaType).append(" ").append(fieldName).append(") {\n");
+            sb.append("        this.").append(fieldName).append(" = ").append(fieldName).append(";\n");
+            sb.append("    }\n\n");
+        }
+        return sb.toString();
+    }
+    
+    private String getJavaTypeName(Class<?> clazz) {
+        if (clazz == Integer.class) return "Integer";
+        if (clazz == Long.class) return "Long";
+        if (clazz == Double.class) return "Double";
+        if (clazz == Boolean.class) return "Boolean";
+        if (clazz == java.util.Date.class) return "java.util.Date";
+        return "String";
+    }
+    
+    private String toCamelCase(String name) {
+        if (name == null || name.isEmpty()) {
+            return name;
+        }
+        
+        String[] parts = name.split("_");
+        StringBuilder result = new StringBuilder(parts[0].toLowerCase());
+        
+        for (int i = 1; i < parts.length; i++) {
+            if (!parts[i].isEmpty()) {
+                result.append(Character.toUpperCase(parts[i].charAt(0)));
+                if (parts[i].length() > 1) {
+                    result.append(parts[i].substring(1).toLowerCase());
+                }
+            }
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * Generate pom.xml cho project được generate
+     */
+    private void generatePomXml() throws IOException {
+        StringBuilder pom = new StringBuilder();
+        
+        pom.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        pom.append("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n");
+        pom.append("         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n");
+        pom.append("         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 \n");
+        pom.append("         http://maven.apache.org/xsd/maven-4.0.0.xsd\">\n");
+        pom.append("    <modelVersion>4.0.0</modelVersion>\n\n");
+        
+        String groupId = usePackage && packageName != null && !packageName.trim().isEmpty() 
+            ? packageName 
+            : "com.sep.generated";
+        pom.append("    <groupId>").append(groupId).append("</groupId>\n");
+        pom.append("    <artifactId>generated-crud-app</artifactId>\n");
+        pom.append("    <version>1.0.0</version>\n");
+        pom.append("    <packaging>jar</packaging>\n\n");
+        
+        pom.append("    <name>Generated CRUD Application</name>\n");
+        pom.append("    <description>Auto-generated CRUD application - Framework source code included</description>\n\n");
+        
+        pom.append("    <properties>\n");
+        pom.append("        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>\n");
+        pom.append("        <maven.compiler.source>8</maven.compiler.source>\n");
+        pom.append("        <maven.compiler.target>8</maven.compiler.target>\n");
+        pom.append("    </properties>\n\n");
+        
+        pom.append("    <dependencies>\n");
+        pom.append("        <!-- Framework source code đã được copy vào project, không cần dependency -->\n\n");
+        
+        pom.append("        <!-- Database Drivers -->\n");
+        pom.append("        <dependency>\n");
+        pom.append("            <groupId>mysql</groupId>\n");
+        pom.append("            <artifactId>mysql-connector-java</artifactId>\n");
+        pom.append("            <version>8.0.33</version>\n");
+        pom.append("        </dependency>\n");
+        pom.append("        <dependency>\n");
+        pom.append("            <groupId>org.postgresql</groupId>\n");
+        pom.append("            <artifactId>postgresql</artifactId>\n");
+        pom.append("            <version>42.6.0</version>\n");
+        pom.append("        </dependency>\n");
+        pom.append("    </dependencies>\n\n");
+        
+        pom.append("    <build>\n");
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            pom.append("        <sourceDirectory>src/main/java</sourceDirectory>\n");
+        } else {
+            pom.append("        <sourceDirectory>.</sourceDirectory>\n");
+        }
+        pom.append("        <plugins>\n");
+        pom.append("            <plugin>\n");
+        pom.append("                <groupId>org.apache.maven.plugins</groupId>\n");
+        pom.append("                <artifactId>maven-compiler-plugin</artifactId>\n");
+        pom.append("                <version>3.11.0</version>\n");
+        pom.append("                <configuration>\n");
+        pom.append("                    <source>8</source>\n");
+        pom.append("                    <target>8</target>\n");
+        pom.append("                </configuration>\n");
+        pom.append("            </plugin>\n");
+        pom.append("            <plugin>\n");
+        pom.append("                <groupId>org.codehaus.mojo</groupId>\n");
+        pom.append("                <artifactId>exec-maven-plugin</artifactId>\n");
+        pom.append("                <version>3.1.0</version>\n");
+        pom.append("                <configuration>\n");
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            pom.append("                    <!-- Thay đổi mainClass khi chạy: -Dexec.mainClass=package.ClassNameMain -->\n");
+            pom.append("                    <mainClass>").append(packageName).append(".TableNameMain</mainClass>\n");
+        } else {
+            pom.append("                    <!-- Thay đổi mainClass khi chạy: -Dexec.mainClass=ClassNameMain -->\n");
+            pom.append("                    <mainClass>TableNameMain</mainClass>\n");
+        }
+        pom.append("                </configuration>\n");
+        pom.append("            </plugin>\n");
+        pom.append("        </plugins>\n");
+        pom.append("    </build>\n");
+        pom.append("</project>\n");
+        
+        Path pomPath = Paths.get(outputPath, "pom.xml");
+        Files.write(pomPath, pom.toString().getBytes("UTF-8"));
+        System.out.println("Generated: " + pomPath.toString());
+    }
+    
+    /**
+     * Write file với path normalization
+     * Tạo cấu trúc Maven: src/main/java/package/... hoặc flat structure
+     */
+    private void writeFile(String fileName, String content) throws IOException {
+        Path fullPath;
+        
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            // Tạo Maven directory structure với package
+            String packagePath = packageName.replace(".", File.separator);
+            fullPath = Paths.get(outputPath, "src", "main", "java", packagePath, fileName);
+        } else {
+            // Flat structure - không có package
+            fullPath = Paths.get(outputPath, fileName);
+        }
+        
+        // Tạo thư mục nếu chưa tồn tại
+        Files.createDirectories(fullPath.getParent());
+        
+        // Write file
+        Files.write(fullPath, content.getBytes("UTF-8"));
+        
+        System.out.println("Generated: " + fullPath.toString());
+    }
+    
+    /**
+     * Convert table name to PascalCase
+     */
+    private String toPascalCase(String name) {
+        if (name == null || name.isEmpty()) {
+            return name;
+        }
+        
+        String[] parts = name.split("_");
+        StringBuilder result = new StringBuilder();
+        
+        for (String part : parts) {
+            if (!part.isEmpty()) {
+                result.append(Character.toUpperCase(part.charAt(0)));
+                if (part.length() > 1) {
+                    result.append(part.substring(1).toLowerCase());
+                }
+            }
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * Generate Main class để chạy độc lập
+     */
+    private void generateMain(String tableName, List<ColumnInfo> columns, String primaryKey) throws Exception {
+        String className = toPascalCase(tableName);
+        String mainClassName = className + "Main";
+        StringBuilder code = new StringBuilder();
+        
+        // Package declaration (only if usePackage is true)
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            code.append("package ").append(packageName).append(";\n\n");
+        }
+        
+        // Imports (framework source code đã được copy vào project)
+        code.append("import com.sep.framework.database.DatabaseContext;\n");
+        code.append("import com.sep.framework.database.DatabaseStrategy;\n");
+        code.append("import com.sep.framework.database.MySQLStrategy;\n");
+        code.append("import javax.swing.*;\n\n");
+        
+        // Class with main method
+        code.append("/**\n");
+        code.append(" * Main class to run ").append(className).append("Form\n");
+        code.append(" * Auto-generated by SEP Framework Code Generator\n");
+        code.append(" * \n");
+        code.append(" * Usage: Run this class to open CRUD form for table '").append(tableName).append("'\n");
+        code.append(" */\n");
+        code.append("public class ").append(mainClassName).append(" {\n\n");
+        
+        code.append("    public static void main(String[] args) {\n");
+        code.append("        SwingUtilities.invokeLater(() -> {\n");
+        code.append("            try {\n");
+        code.append("                // Set Look and Feel\n");
+        code.append("                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());\n");
+        code.append("                \n");
+        code.append("                // Setup database connection\n");
+        code.append("                DatabaseStrategy strategy = new MySQLStrategy();\n");
+        code.append("                DatabaseContext dbContext = new DatabaseContext(strategy);\n");
+        code.append("                \n");
+        code.append("                // Configure connection - MODIFY THESE VALUES FOR YOUR DATABASE\n");
+        code.append("                String connectionString = \"jdbc:mysql://localhost:3306/sep_demo?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true\";\n");
+        code.append("                dbContext.setConnectionString(connectionString);\n");
+        code.append("                dbContext.setCredentials(\"sep_user\", \"sep_password\");\n");
+        code.append("                \n");
+        code.append("                // Create and show form\n");
+        code.append("                ").append(className).append("Form form = new ").append(className).append("Form(dbContext);\n");
+        code.append("                form.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);\n");
+        code.append("                form.setVisible(true);\n");
+        code.append("                \n");
+        code.append("            } catch (Exception e) {\n");
+        code.append("                e.printStackTrace();\n");
+        code.append("                JOptionPane.showMessageDialog(null, \n");
+        code.append("                    \"Error: \" + e.getMessage(), \n");
+        code.append("                    \"Error\", \n");
+        code.append("                    JOptionPane.ERROR_MESSAGE);\n");
+        code.append("            }\n");
+        code.append("        });\n");
+        code.append("    }\n");
+        code.append("}\n");
+        
+        String fileName = mainClassName + ".java";
+        writeFile(fileName, code.toString());
+    }
+    
+    /**
+     * Generate README file hướng dẫn sử dụng
+     */
+    private void generateReadme(List<String> generatedTables) throws Exception {
+        StringBuilder readme = new StringBuilder();
+        
+        readme.append("# Generated CRUD Application - SEP Framework\n\n");
+        readme.append("Ứng dụng CRUD được tự động phát sinh từ database schema.\n\n");
+        
+        readme.append("## Yêu cầu\n");
+        readme.append("- Java JDK 8+\n");
+        readme.append("- Maven 3.6+\n");
+        readme.append("- MySQL Database\n\n");
+        
+        readme.append("## Framework Source Code\n\n");
+        readme.append("✅ **Framework source code đã được tự động copy vào project!**\n\n");
+        readme.append("Không cần cài đặt SEP Framework riêng. Tất cả source code của framework đã được copy vào:\n");
+        readme.append("```\n");
+        readme.append("src/main/java/com/sep/framework/\n");
+        readme.append("├── database/     # Database abstraction layer\n");
+        readme.append("├── crud/         # CRUD base form\n");
+        readme.append("├── patterns/     # Design patterns (Factory, etc.)\n");
+        readme.append("└── ioc/          # IoC container\n");
+        readme.append("```\n\n");
+        readme.append("**Bạn có thể chạy project này ở bất kỳ đâu trên laptop mà không cần cài đặt gì thêm!**\n\n");
+        
+        readme.append("## Cấu hình Database\n\n");
+        readme.append("Sửa các thông số kết nối trong file `*Main.java`:\n\n");
+        readme.append("```java\n");
+        readme.append("String connectionString = \"jdbc:mysql://localhost:3306/YOUR_DATABASE?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true\";\n");
+        readme.append("dbContext.setCredentials(\"YOUR_USERNAME\", \"YOUR_PASSWORD\");\n");
+        readme.append("```\n\n");
+        
+        readme.append("## Cách chạy\n\n");
+        readme.append("### Cách 1: Sử dụng Maven (Khuyến nghị)\n\n");
+        readme.append("```bash\n");
+        readme.append("# Compile\n");
+        readme.append("mvn clean compile\n\n");
+        readme.append("# Chạy ứng dụng (thay TableName bằng tên bảng)\n");
+        for (String table : generatedTables) {
+            String className = toPascalCase(table);
+            readme.append("mvn exec:java -Dexec.mainClass=\"").append(packageName).append(".").append(className).append("Main\"\n");
+        }
+        readme.append("```\n\n");
+        
+        readme.append("### Cách 2: Sử dụng Java trực tiếp\n\n");
+        readme.append("```bash\n");
+        readme.append("# Compile\n");
+        readme.append("mvn compile\n\n");
+        readme.append("# Chạy (thay TableName bằng tên bảng)\n");
+        for (String table : generatedTables) {
+            String className = toPascalCase(table);
+            readme.append("java -cp \"target/classes:$(mvn dependency:build-classpath -q -DincludeScope=runtime)\" ");
+            readme.append(packageName).append(".").append(className).append("Main\n");
+        }
+        readme.append("```\n\n");
+        
+        readme.append("## Các file được generate\n\n");
+        readme.append("| File | Mô tả |\n");
+        readme.append("|------|-------|\n");
+        readme.append("| `pom.xml` | Maven project file với dependencies |\n");
+        for (String table : generatedTables) {
+            String className = toPascalCase(table);
+            readme.append("| `src/main/java/").append(packageName.replace(".", "/")).append("/").append(className).append(".java` | Entity class |\n");
+            readme.append("| `src/main/java/").append(packageName.replace(".", "/")).append("/").append(className).append("Form.java` | CRUD Form (kế thừa BaseCrudForm) |\n");
+            readme.append("| `src/main/java/").append(packageName.replace(".", "/")).append("/").append(className).append("Service.java` | Service class với CRUD methods |\n");
+            readme.append("| `src/main/java/").append(packageName.replace(".", "/")).append("/").append(className).append("Main.java` | Main class để chạy form |\n");
+        }
+        readme.append("\n");
+        
+        readme.append("## Tính năng CRUD\n\n");
+        readme.append("Mỗi form được generate có đầy đủ tính năng:\n");
+        readme.append("- ✅ **Create**: Thêm mới record (nút \"Thêm\" hoặc context menu)\n");
+        readme.append("- ✅ **Read**: Xem danh sách records trên bảng\n");
+        readme.append("- ✅ **Update**: Cập nhật record (double-click hoặc context menu)\n");
+        readme.append("- ✅ **Delete**: Xóa record (nút \"Xóa\" hoặc context menu)\n");
+        readme.append("- ✅ **Refresh**: Làm mới dữ liệu (nút \"Làm mới\")\n\n");
+        
+        readme.append("## Cấu trúc Project\n\n");
+        readme.append("```\n");
+        readme.append("generated/\n");
+        readme.append("├── pom.xml\n");
+        readme.append("├── README.md\n");
+        readme.append("└── src/\n");
+        readme.append("    └── main/\n");
+        readme.append("        └── java/\n");
+        readme.append("            ├── com/sep/framework/    # Framework source code (đã copy)\n");
+        readme.append("            │   ├── database/\n");
+        readme.append("            │   ├── crud/\n");
+        readme.append("            │   ├── patterns/\n");
+        readme.append("            │   └── ioc/\n");
+        if (usePackage && packageName != null && !packageName.trim().isEmpty()) {
+            readme.append("            └── ").append(packageName.replace(".", "/")).append("/\n");
+            for (String table : generatedTables) {
+                String className = toPascalCase(table);
+                readme.append("                ├── ").append(className).append(".java\n");
+                readme.append("                ├── ").append(className).append("Form.java\n");
+                readme.append("                ├── ").append(className).append("Service.java\n");
+                readme.append("                └── ").append(className).append("Main.java\n");
+            }
+        } else {
+            readme.append("            └── (flat structure - no package)\n");
+            for (String table : generatedTables) {
+                String className = toPascalCase(table);
+                readme.append("                ├── ").append(className).append(".java\n");
+                readme.append("                ├── ").append(className).append("Form.java\n");
+                readme.append("                ├── ").append(className).append("Service.java\n");
+                readme.append("                └── ").append(className).append("Main.java\n");
+            }
+        }
+        readme.append("```\n");
+        readme.append("\n");
+        readme.append("**Lưu ý**: Framework source code đã được tự động copy vào project. Bạn có thể chạy project này ở bất kỳ đâu mà không cần cài đặt SEP Framework.\n\n");
+        if (!usePackage || packageName == null || packageName.trim().isEmpty()) {
+            readme.append("**Lưu ý thêm**: Code được generate không có package (flat structure), có thể copy và sử dụng ở bất kỳ project nào.\n\n");
+        }
+        
+        // Write README
+        Path readmePath = Paths.get(outputPath, "README.md");
+        Files.write(readmePath, readme.toString().getBytes("UTF-8"));
+        System.out.println("Generated: " + readmePath.toString());
+    }
+    
+    /**
+     * Copy framework source code vào project được generate
+     */
+    private void copyFrameworkSource() throws IOException {
+        // Tìm framework source path từ nhiều vị trí có thể
+        Path frameworkPath = null;
+        
+        // Try 1: Relative to current working directory
+        Path path1 = Paths.get(System.getProperty("user.dir"), "2.Source code", "src", "main", "java", "com", "sep", "framework");
+        if (Files.exists(path1)) {
+            frameworkPath = path1;
+        } else {
+            // Try 2: Relative path from project root
+            Path path2 = Paths.get("2.Source code", "src", "main", "java", "com", "sep", "framework");
+            if (Files.exists(path2)) {
+                frameworkPath = path2;
+            } else {
+                // Try 3: Standard Maven structure
+                Path path3 = Paths.get("src", "main", "java", "com", "sep", "framework");
+                if (Files.exists(path3)) {
+                    frameworkPath = path3;
+                } else {
+                    // Try 4: From class location
+                    try {
+                        String classPath = CodeGenerator.class.getProtectionDomain().getCodeSource().getLocation().getPath();
+                        Path classDir = Paths.get(classPath);
+                        if (classDir.toString().contains("target")) {
+                            // We're in compiled classes, go up to source
+                            frameworkPath = classDir.getParent().getParent().resolve("src").resolve("main").resolve("java").resolve("com").resolve("sep").resolve("framework");
+                        }
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                }
+            }
+        }
+        
+        if (frameworkPath == null || !Files.exists(frameworkPath)) {
+            System.err.println("Warning: Cannot find framework source code. Tried multiple paths.");
+            System.err.println("Please ensure framework source is at: 2.Source code/src/main/java/com/sep/framework");
+            return;
+        }
+        
+        Path targetPath = Paths.get(outputPath, "src", "main", "java", "com", "sep", "framework");
+        Files.createDirectories(targetPath);
+        
+        // Copy các package cần thiết
+        copyDirectory(frameworkPath.resolve("database"), targetPath.resolve("database"));
+        copyDirectory(frameworkPath.resolve("crud"), targetPath.resolve("crud"));
+        copyDirectory(frameworkPath.resolve("patterns"), targetPath.resolve("patterns"));
+        copyDirectory(frameworkPath.resolve("ioc"), targetPath.resolve("ioc"));
+        
+        System.out.println("Copied framework source code from: " + frameworkPath.toString());
+        System.out.println("Copied framework source code to: " + targetPath.toString());
+    }
+    
+    /**
+     * Copy directory recursively
+     */
+    private void copyDirectory(Path source, Path target) throws IOException {
+        if (!Files.exists(source)) {
+            return;
+        }
+        
+        Files.createDirectories(target);
+        
+        Files.walk(source).forEach(sourcePath -> {
+            try {
+                Path targetPath = target.resolve(source.relativize(sourcePath));
+                if (Files.isDirectory(sourcePath)) {
+                    Files.createDirectories(targetPath);
+                } else if (sourcePath.toString().endsWith(".java")) {
+                    Files.copy(sourcePath, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (IOException e) {
+                System.err.println("Error copying file: " + sourcePath + " - " + e.getMessage());
+            }
+        });
+    }
+    
+    /**
+     * Generate code cho tất cả các bảng
+     */
+    public void generateAll() throws Exception {
+        // Copy framework source code trước
+        copyFrameworkSource();
+        
+        // Generate pom.xml trước
+        generatePomXml();
+        
+        List<String> tables = dbContext.getTables();
+        for (String table : tables) {
+            generateForTable(table);
+        }
+        
+        // Generate README
+        generateReadme(tables);
+    }
+}
+
